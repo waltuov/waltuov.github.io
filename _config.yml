@@ -1,0 +1,11 @@
+title: waltuov
+description: rust build tooling. fixes upstream in cc-rs, tokio, mio and more.
+url: https://waltuov.github.io
+theme: minima
+permalink: /posts/:title/
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+github_username: waltuov
+exclude:
+  - README.md
