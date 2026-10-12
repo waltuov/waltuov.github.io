@@ -23,7 +23,7 @@ i work on rust build tooling, mostly cc-rs, plus tokio and mio on windows. these
 ## 3. tokio: stdout output lost at runtime shutdown ([tokio#8506](https://github.com/tokio-rs/tokio/pull/8506))
 
 - **problem:** a write to `tokio::io::stdout()` without a flush could be silently dropped when the runtime shut down right after it ([tokio#7174](https://github.com/tokio-rs/tokio/issues/7174), open since february 2025).
-- **fix:** stdout and stderr writes now run as mandatory blocking tasks, like `tokio::fs`, and a write after shutdown returns an error instead of doing nothing. stdin stays non-mandatory, so a pending read can't hold up shutdown. continues maminrayej's #7178 with his commits kept.
+- **fix:** stdout and stderr writes now run as mandatory blocking tasks, like `tokio::fs`, and a write after shutdown returns an error instead of doing nothing. stdin stays non-mandatory, so a pending read can't hold up shutdown. continues maminrayej's #7178, keeping those commits.
 - **evidence:** a loom test that fails on master. a program writing 3 lines from each of 1000 runtimes lost 21 to 188 of 3000 lines per run on master, and none with the change.
 - **maintainer:** ADD-SP: "Overall looks good to me" ([review](https://github.com/tokio-rs/tokio/pull/8506#pullrequestreview-5330140778))
 

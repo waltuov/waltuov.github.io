@@ -4,7 +4,7 @@ title: "Why Windows named pipe reads in mio stopped at 4 KiB"
 date: 2026-10-07
 ---
 
-In December 2022, LeonarddeR [reported](https://github.com/tokio-rs/tokio/issues/5307) that a Tokio named pipe server on Windows never read more than 4096 bytes at a time. His buffer had 64 KiB of capacity. A client sent 8192 bytes, and the server got two chunks of 4096. In October 2026 a fix landed in mio, the I/O layer under Tokio, as [mio#2022](https://github.com/tokio-rs/mio/pull/2022). This post covers why the cap existed, why earlier attempts stalled, how the fix works, and how it was checked without a local Windows machine.
+In December 2022, LeonarddeR [reported](https://github.com/tokio-rs/tokio/issues/5307) that a Tokio named pipe server on Windows never read more than 4096 bytes at a time. The server's buffer had 64 KiB of capacity. A client sent 8192 bytes, and the server got two chunks of 4096. In October 2026 a fix landed in mio, the I/O layer under Tokio, as [mio#2022](https://github.com/tokio-rs/mio/pull/2022). This post covers why the cap existed, why earlier attempts stalled, how the fix works, and how the tests show it.
 
 ## The symptom, measured again
 
@@ -32,7 +32,7 @@ A small size keeps one cost low: a read is always pending on every open pipe, so
 
 The cap was known before this issue, from the other direction. In 2022, [mio#1582](https://github.com/tokio-rs/mio/issues/1582) asked for *smaller* reads. mio-serial and tokio-serial wrap serial ports in mio's `NamedPipe`, and on a serial port a read can wait until its buffer is full.
 
-Thomasdezeeuw wrote [mio#1608](https://github.com/tokio-rs/mio/pull/1608), a `NamedPipe::set_buffer_size` method. Two users confirmed it helped. He closed it in 2023 because "it's likely not the API we want". In the Tokio thread he gave the reason: it exposes an implementation detail, since no other mio type uses a buffer pool. He [suggested](https://github.com/tokio-rs/tokio/issues/5307#issuecomment-1361281847) using "the length/capacity of the buffer passed in" instead. The reporter tried a proof of concept, but it still returned 4096 byte chunks. In 2024 the serial port issue was [closed for inactivity](https://github.com/tokio-rs/mio/issues/1582#issuecomment-2156493847): "It seems people want this, but no one is willing to put in the work."
+Thomasdezeeuw wrote [mio#1608](https://github.com/tokio-rs/mio/pull/1608), a `NamedPipe::set_buffer_size` method. Two users confirmed it helped. Thomasdezeeuw closed it in 2023 because "it's likely not the API we want", and the Tokio thread gives the reason: it exposes an implementation detail, since no other mio type uses a buffer pool. The [suggested alternative](https://github.com/tokio-rs/tokio/issues/5307#issuecomment-1361281847) was to use "the length/capacity of the buffer passed in". The reporter tried a proof of concept, but it still returned 4096 byte chunks. In 2024 the serial port issue was [closed for inactivity](https://github.com/tokio-rs/mio/issues/1582#issuecomment-2156493847): "It seems people want this, but no one is willing to put in the work."
 
 So the direction had been agreed since 2022. What was missing was the work: the edge cases, the tests, and a way to run them on Windows.
 
@@ -66,9 +66,7 @@ let max_read_size = if GetFileType(handle as HANDLE) == FILE_TYPE_PIPE {
 
 This gate was not tested with a real serial device.
 
-## Proving it without a Windows machine
-
-The fix was written on macOS, where these tests can't run. Locally, only compiling and linting for the Windows target was possible. The proof had to come from CI.
+## How the tests show it
 
 There are three new tests in `tests/win_named_pipe.rs`: a 64 KiB buffer (plain and vectored), a buffer size that changes between reads, and a message over 4 KiB in message mode. Each uses a blocking client whose `write_all` returns once all the data is read or sits in the pipe's buffer, so the tests don't depend on timing.
 
@@ -83,7 +81,7 @@ Then the PR went upstream. GlenDC, who reviews Windows changes for mio, ran the 
 
 The fix has a known gap, stated in the PR. The first read of a new pipe is submitted when the pipe is registered or connects, before any `read` call. So it stays at 4 KiB. The issue's exact case, 8192 bytes right after connecting, still arrives in two reads. Later reads are sized like the caller's buffer. That is why the PR says "For tokio-rs/tokio#5307" and not "Closes", and the issue is still open. The change is also not in a mio release yet. The latest tag, v1.2.4, predates both PRs.
 
-GlenDC has a better long term plan, described in his review. First he is landing a rework that gives each named pipe operation its own `OVERLAPPED` (the fix for [mio#1983](https://github.com/tokio-rs/mio/issues/1983)). Then he wants to try what libuv does: a zero byte read for readiness, then a read straight into the caller's buffer. That sizes every read by the current call, drops the internal copy, and covers the first read too. It would replace this sizing, which he called "a clear improvement until then". That order makes sense. The clamp is a bridge, and the zero byte read removes the problem it works around.
+GlenDC has a better long term plan, described in the review. First comes a rework that gives each named pipe operation its own `OVERLAPPED` (the fix for [mio#1983](https://github.com/tokio-rs/mio/issues/1983)). Then the plan is to try what libuv does: a zero byte read for readiness, then a read straight into the caller's buffer. That sizes every read by the current call, drops the internal copy, and covers the first read too. It would replace this sizing, which GlenDC called "a clear improvement until then". That order makes sense. The clamp is a bridge, and the zero byte read removes the problem it works around.
 
 ## Thanks
 
